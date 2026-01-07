@@ -60,14 +60,14 @@ go test ./tests/...
 The `Standardizer` service cleans incoming raw data using a chain of injected rules.
 
 ```go
-// Example Configuration via Factories
-ruleConfigs := []domain.RuleConfig{
-    {ID: "monotonic"},
-    {ID: "jump", Params: map[string]any{"max_threshold": 100.0}},
+// Define custom rules implementing ports.CleaningRule
+type MaxLimitRule struct{ limit float64 }
+func (r *MaxLimitRule) Check(prev *domain.Reading, curr domain.Reading) (bool, error) {
+    if curr.Value > r.limit { return false, fmt.Errorf("exceeded") }
+    return true, nil
 }
-chain := rules.NewChain(ruleConfigs)
 
-sanitizer := domain.NewSanitizer(chain...)
+sanitizer := services.NewSanitizer(&MaxLimitRule{100})
 ```
 
 ### domain.Unifier

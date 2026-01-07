@@ -2,20 +2,34 @@ package services_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/renjie/prism/internal/core/domain"
 	"github.com/renjie/prism/internal/core/services"
-	"github.com/renjie/prism/internal/core/services/rules"
 )
+
+// Define a test-specific rule
+type monotonicTestRule struct{}
+
+func (r *monotonicTestRule) Check(prev *domain.Reading, curr domain.Reading) (bool, error) {
+	if curr.Value < 0 {
+		return false, fmt.Errorf("negative")
+	}
+	// Strict monotonic for test: no regression allowed
+	if prev != nil && curr.Value < prev.Value {
+		return false, fmt.Errorf("calc regression")
+	}
+	return true, nil
+}
 
 func TestCoreStandardizer(t *testing.T) {
 	// Setup
 	// Factor 10000 (4 decimal places)
 	// Repo nil (Stateless mode test)
 	// Rules: Monotonic (Prevent Decreases)
-	standardizer := services.NewCoreStandardizer(10000, nil, &rules.MonotonicRule{})
+	standardizer := services.NewCoreStandardizer(10000, nil, &monotonicTestRule{})
 
 	// Prepare Data with Issues
 	// 1. Normal (10:00, 100.0)

@@ -81,26 +81,23 @@ ingestor.IngestStream(context.Background(), file)
 ```go
 import (
     "github.com/renjie/prism/internal/core/services"
-    "github.com/renjie/prism/internal/core/services/rules"
     "github.com/renjie/prism/internal/core/domain"
 )
 
-// 场景：我们需要严格的数据质量控制
-// 1. 禁止数值下降 (MonotonicRule)
-// 2. 禁止单次变化超过 100.0 (JumpRule)
-// 3. 精度要求保留4位小数 (Factor = 10000)
-
-// 使用配置项构建规则链（推荐模式）
-ruleConfigs := []domain.RuleConfig{
-    {ID: "monotonic"},
-    {ID: "jump", Params: map[string]any{"max_threshold": 100.0}},
+// 声明本地规则实现 (或从其他包导入)
+type MyMonotonicRule struct{}
+func (r *MyMonotonicRule) Check(prev *domain.Reading, curr domain.Reading) (bool, error) {
+    if prev != nil && curr.Value < prev.Value {
+        return false, fmt.Errorf("regression")
+    }
+    return true, nil
 }
-chain := rules.NewChain(ruleConfigs)
 
+// 场景：我们需要严格的数据质量控制
 standardizer := services.NewCoreStandardizer(
     10000, 
     nil,   
-    chain...,
+    &MyMonotonicRule{}, 
 )
 ```
 

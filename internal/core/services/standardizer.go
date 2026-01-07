@@ -12,7 +12,7 @@ import (
 // CoreStandardizer 核心数据标准化服务
 // 实现了 EnergyDataStandardizer 接口
 type CoreStandardizer struct {
-	sanitizer domain.Sanitizer
+	sanitizer ports.Sanitizer
 	unifier   domain.Unifier
 	repo      ports.StandardReadingRepository // 可选持久层依赖
 }
@@ -22,11 +22,11 @@ type CoreStandardizer struct {
 //   - precisionFactor: 精度因子 (B. 统一度量衡)
 //   - repo: 持久层实现 (传入 nil 则仅支持 ProcessAndStandardize 纯计算模式)
 //   - rules: 可变参数，传入需要应用的清洗规则
-func NewCoreStandardizer(precisionFactor int, repo ports.StandardReadingRepository, rules ...domain.CleaningRule) ports.EnergyDataStandardizer {
+func NewCoreStandardizer(precisionFactor int, repo ports.StandardReadingRepository, rules ...ports.CleaningRule) ports.EnergyDataStandardizer {
 	// 如果没有提供规则，可以使用默认规则集，或者留空
 	// 这里我们选择直接传入
 	return &CoreStandardizer{
-		sanitizer: domain.NewSanitizer(rules...),
+		sanitizer: NewSanitizer(rules...),
 		unifier:   domain.NewUnifier(precisionFactor),
 		repo:      repo,
 	}
