@@ -1,5 +1,7 @@
 # Prism: Universal Energy Data Adapter
 
+[中文文档 (Chinese Documentation)](README_CN.md)
+
 **Prism** is a high-performance, modular data processing engine designed to standardize energy and utilities data (Water, Electricity, Gas) from heterogeneous sources. Built with **Hexagonal Architecture** (Ports & Adapters) principles in Go, strictly separating core domain logic from external dependencies.
 
 ## 🌟 Core Features
