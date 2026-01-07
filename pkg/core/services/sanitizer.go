@@ -3,8 +3,8 @@ package services
 import (
 	"sort"
 
-	"github.com/renjie/prism/internal/core/domain"
-	"github.com/renjie/prism/internal/core/ports"
+	"github.com/renjie/prism-core/pkg/core/domain"
+	"github.com/renjie/prism-core/pkg/core/ports"
 )
 
 // ChainSanitizer 基于责任链模式的清洗器实现
@@ -32,9 +32,9 @@ func (s *ChainSanitizer) Clean(readings []domain.Reading) []domain.Reading {
 	var prev *domain.Reading
 
 	for _, curr := range readings {
-		// 0. 内置规则: 时间戳去重
-		if prev != nil && prev.Timestamp.Equal(curr.Timestamp) {
-			continue // Default Deduplication
+		// 0. 内置规则: 同设备下的时间戳去重
+		if prev != nil && prev.DeviceInfo.ID == curr.DeviceInfo.ID && prev.Timestamp.Equal(curr.Timestamp) {
+			continue // Deduplication
 		}
 
 		// 执行规则链

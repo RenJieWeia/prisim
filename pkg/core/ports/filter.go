@@ -1,6 +1,6 @@
 package ports
 
-import "github.com/renjie/prism/internal/core/domain"
+import "github.com/renjie/prism-core/pkg/core/domain"
 
 // CleaningRule 清洗规则接口
 // 这是一个策略接口，具体的业务规则（如单调性、跳变检测）由外部实现注入

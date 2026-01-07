@@ -1,6 +1,8 @@
-# Prism: 通用能源数据适配器 (Universal Energy Data Adapter)
+# Prism Core SDK
 
-**Prism** 是一个高性能、模块化的数据处理引擎，专为水、电、气等异构能源数据的标准化而设计。项目采用 Go 语言编写，严格遵循 **六边形架构 (Hexagonal Architecture)** 原则，确保核心业务逻辑与外部依赖（如数据库、消息队列）彻底解耦。
+**Prism Core** 是 Prism 能源数据生态系统的基础 SDK。它提供了一个基于**六边形架构**的高性能、模块化数据处理引擎，专为水、电、气等异构能源数据的标准化而设计。
+
+本库被设计为核心依赖 (Core Dependency)，供上层服务（如 HTTP API、CLI 工具、ETL 管道）引用，以提供一致的数据清洗和标准化能力。
 
 ## 🌟 核心特性
 
@@ -17,15 +19,15 @@
   - **精度统一 (Unifier)**: 将浮点数转换为高精度的整型定点数 (Scaled Integer)，彻底消除浮点运算误差 (例如 kWh -> micro-kWh)。
   - **时间对齐 (Aligner)**: 将散乱的时间点对齐到标准的整点快照 (Snapshot)。
 - **架构设计**:
-  - **Domain (领域层)**: 纯粹的业务逻辑，定义核心接口 (`CleaningRule`, `Sanitizer`, `Unifier`).
+  - **Domain (领域层)**: 纯粹的业务逻辑 (`pkg/core/domain`)，定义核心接口 (`CleaningRule`, `Sanitizer`, `Unifier`).
   - **Ports (端口层)**: 定义输入 (API/Ingestor) 和输出 (Repository) 的契约.
-  - **Services (服务层)**: 编排领域逻辑与端口的胶水层.
+  - **Services (服务层)**: 编排领域逻辑与端口的胶水层 (`pkg/core/services`).
 
 ## 📂 项目结构
 
 ```
-prisim/
-├── internal/
+prism-core/
+├── pkg/
 │   └── core/
 │       ├── domain/        # 核心业务逻辑 (实体 & 规则)
 │       │   ├── aligner.go    # 时间对齐逻辑
@@ -41,9 +43,13 @@ prisim/
 └── testdata/              # 测试用例样本数据
 ```
 
-## 📖 详细使用教程
+## 🚀 快速开始
 
-### 1. 数据摄入 (Ingestion)
+### 安装
+
+```bash
+go get github.com/renjie/prism-core
+```
 
 使用 `JsonUniversalIngestor` 从文件或网络流中读取原始数据。
 
@@ -51,8 +57,8 @@ prisim/
 import (
     "context"
     "os"
-    "github.com/renjie/prism/internal/core/services"
-    "github.com/renjie/prism/internal/core/domain"
+    "github.com/renjie/prism-core/pkg/core/services"
+    "github.com/renjie/prism-core/pkg/core/domain"
 )
 
 // 定义数据接收回调（模拟“下游”处理）
@@ -80,8 +86,8 @@ ingestor.IngestStream(context.Background(), file)
 
 ```go
 import (
-    "github.com/renjie/prism/internal/core/services"
-    "github.com/renjie/prism/internal/core/domain"
+    "github.com/renjie/prism-core/pkg/core/services"
+    "github.com/renjie/prism-core/pkg/core/domain"
 )
 
 // 声明本地规则实现 (或从其他包导入)
@@ -94,10 +100,13 @@ func (r *MyMonotonicRule) Check(prev *domain.Reading, curr domain.Reading) (bool
 }
 
 // 场景：我们需要严格的数据质量控制
+// 使用 Functional Options 配置服务
 standardizer := services.NewCoreStandardizer(
-    10000, 
-    nil,   
-    &MyMonotonicRule{}, 
+    services.WithPrecision(10000), 
+    services.WithCleaningRules(&MyMonotonicRule{}),
+    services.WithAlignment(15*time.Minute, 1*time.Minute),
+)
+``` 
 )
 ```
 
@@ -120,6 +129,32 @@ for _, res := range results {
 // Output:
 // Standardized: 1000000 (Raw: 100.00)
 // Standardized: 1050000 (Raw: 105.00)
+```
+
+### 4. 数据持久化 (Persistence)
+
+项目提供了 SQLite 持久化适配器示例。
+
+**前置条件**: 需要安装 CGO 支持的 SQLite 驱动 (推荐 GCC 环境)。
+```bash
+go get github.com/mattn/go-sqlite3
+```
+
+**示例代码**: 参见 `cmd/example/sqlite_demo/main.go`
+
+```go
+// 1. 初始化 SQLite 仓库
+db, _ := sql.Open("sqlite3", "./prism.db")
+repo, _ := sqlite.NewSqliteRepository(db)
+
+// 2. 注入到 Standardizer
+standardizer := services.NewCoreStandardizer(10000, repo, chain...)
+
+// 3. 处理并自动保存
+// ProcessAndStandardize 内部如果配置了 repo，会尝试保存结果
+// (注: 当前 CoreStandardizer 实现可能需要更新以调用 Save，视具体实现而定，
+//  默认 ProcessAndStandardize 主要是计算，持久化通常由应用层编排，
+//  但在本示例架构中，CoreStandardizer 包含 repo 字段，可直接集成)
 ```
 
 ## 🛠 开发与测试

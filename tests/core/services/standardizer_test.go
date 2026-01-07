@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/renjie/prism/internal/core/domain"
-	"github.com/renjie/prism/internal/core/services"
+	"github.com/renjie/prism-core/pkg/core/domain"
+	"github.com/renjie/prism-core/pkg/core/services"
 )
 
 // Define a test-specific rule
@@ -29,7 +29,12 @@ func TestCoreStandardizer(t *testing.T) {
 	// Factor 10000 (4 decimal places)
 	// Repo nil (Stateless mode test)
 	// Rules: Monotonic (Prevent Decreases)
-	standardizer := services.NewCoreStandardizer(10000, nil, &monotonicTestRule{})
+	// Interval: 15m, Tolerance: 5m
+	standardizer := services.NewCoreStandardizer(
+		services.WithPrecision(10000),
+		services.WithAlignment(15*time.Minute, 5*time.Minute),
+		services.WithCleaningRules(&monotonicTestRule{}),
+	)
 
 	// Prepare Data with Issues
 	// 1. Normal (10:00, 100.0)

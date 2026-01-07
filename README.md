@@ -1,8 +1,10 @@
-# Prism: Universal Energy Data Adapter
+# Prism Core SDK
 
 [中文文档 (Chinese Documentation)](README_CN.md)
 
-**Prism** is a high-performance, modular data processing engine designed to standardize energy and utilities data (Water, Electricity, Gas) from heterogeneous sources. Built with **Hexagonal Architecture** (Ports & Adapters) principles in Go, strictly separating core domain logic from external dependencies.
+**Prism Core** is the foundational SDK for the Prism energy data ecosystem. It provides a highly modular, hexagonally architected engine for standardizing energy and utilities data (Water, Electricity, Gas) from heterogeneous sources.
+
+This library is designed to be imported by other services (HTTP APIs, CLI tools, ETL pipelines) to provide consistent data processing capabilities.
 
 ## 🌟 Core Features
 
@@ -18,15 +20,15 @@
   - **Precision Control**: `Unifier` converts floating-point readings to high-precision integer scaled values (e.g., kWh to micro-kWh) to eliminate floating-point arithmetic errors.
   - **Time Alignment**: `Aligner` snaps readings to standard intervals (Snapshots).
 - **Hexagonal Architecture**:
-  - **Domain**: Pure business logic, standard interfaces (`CleaningRule`, `Sanitizer`, `Unifier`).
+  - **Domain**: Pure business logic (`pkg/core/domain`), standard interfaces (`CleaningRule`, `Sanitizer`, `Unifier`).
   - **Ports**: Inbound (API/Ingestors) and Outbound (Repositories/Databases) definitions.
-  - **Services**: Orchestration layer gluing domain logic to ports.
+  - **Services**: Orchestration layer gluing domain logic to ports (`pkg/core/services`).
 
 ## 📂 Project Structure
 
 ```
-prisim/
-├── internal/
+prism-core/
+├── pkg/
 │   └── core/
 │       ├── domain/        # Pure Business Logic (Entities & Rules)
 │       │   ├── aligner.go
@@ -44,11 +46,44 @@ prisim/
 
 ## 🚀 Getting Started
 
-### Prerequisites
-- Go 1.25+
+### Installation
+
+```bash
+go get github.com/renjie/prism-core
+```
+
+### Usage Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+    
+    // Import from the public package path
+    "github.com/renjie/prism-core/pkg/core/services"
+    "github.com/renjie/prism-core/pkg/core/domain"
+)
+
+func main() {
+    // 1. Setup Ingestion
+    ingestor := services.NewJsonUniversalIngestor(func(ctx context.Context, readings []domain.Reading) error {
+        fmt.Printf("Received batch of %d readings\n", len(readings))
+        return nil
+    })
+    
+    // 2. Setup Standardization Service
+    // Configure with 15-minute alignment and 4-decimal precision
+    standardizer := services.NewCoreStandardizer(
+        services.WithAlignment(15*time.Minute, 1*time.Minute),
+        services.WithPrecision(10000),
+    )
+}
+```
 
 ### Running Tests
-The project maintains a strict separation of unit/integration tests in the `tests/` directory.
 
 ```bash
 go test ./tests/...
@@ -67,7 +102,8 @@ func (r *MaxLimitRule) Check(prev *domain.Reading, curr domain.Reading) (bool, e
     return true, nil
 }
 
-sanitizer := services.NewSanitizer(&MaxLimitRule{100})
+// Injected via functional options
+svc := services.NewCoreStandardizer(services.WithCleaningRules(&MaxLimitRule{100}))
 ```
 
 ### domain.Unifier

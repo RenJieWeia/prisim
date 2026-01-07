@@ -1,13 +1,14 @@
 package services
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"time"
 
-	"github.com/renjie/prism/internal/core/domain"
+	"github.com/renjie/prism-core/pkg/core/domain"
 )
 
 // JsonUniversalIngestor 实现 UniversalIngestor 接口
@@ -27,34 +28,58 @@ func NewJsonUniversalIngestor(downstream func(context.Context, []domain.Reading)
 
 // IngestStream 实现 UniversalIngestor.IngestStream
 // 简化版：我们假设输入总是 JSON 数组 [...]，以规避 decoder.Token 的复杂性
-func (j *JsonUniversalIngestor) IngestStream(ctx context.Context, stream io.Reader) error {
-	decoder := json.NewDecoder(stream)
-
-	// 预判 Token: 期待 '['
-	t, err := decoder.Token()
+func (j *JsonUniversalIngestor) IngestStream(ctx context.Context, stream io.Reader) (*domain.IngestionResult, error) {
+	// 使用 bufio.Reader 预读首字节，避免消耗 Token
+	bufStream := bufio.NewReader(stream)
+	head, err := bufStream.Peek(1)
 	if err != nil {
-		return fmt.Errorf("failed to read start token: %w", err)
+		if err == io.EOF {
+			return &domain.IngestionResult{}, nil
+		}
+		return nil, fmt.Errorf("failed to peek start token: %w", err)
 	}
 
-	if delim, ok := t.(json.Delim); !ok || delim != '[' {
-		return fmt.Errorf("expected JSON array '[', got %v", t)
+	decoder := json.NewDecoder(bufStream)
+	result := &domain.IngestionResult{}
+
+	// Case 1: JSON Array [...]
+	if head[0] == '[' {
+		// Consume '['
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+		return j.decodeArray(ctx, decoder, result)
 	}
 
-	readings, err := j.decodeArray(decoder)
-	if err != nil {
-		return err
+	// Case 2: Single JSON Object {...}
+	if head[0] == '{' {
+		var p rawPayload
+		if err := decoder.Decode(&p); err != nil {
+			return nil, fmt.Errorf("failed to decode single object: %w", err)
+		}
+
+		result.Total++
+		reading, err := j.mapToDomain(p)
+		if err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("mapping error: %v", err))
+			return result, nil // Partial success? Or we consider single object fail as total fail.
+		}
+
+		if err := j.downstream(ctx, []domain.Reading{reading}); err != nil {
+			return nil, err
+		}
+		result.Success++
+		return result, nil
 	}
 
-	if len(readings) > 0 {
-		return j.downstream(ctx, readings)
-	}
-	return nil
+	return nil, fmt.Errorf("unexpected JSON format (expected '[' or '{', got '%c')", head[0])
 }
 
 // IngestBatch 实现 UniversalIngestor.IngestBatch
-func (j *JsonUniversalIngestor) IngestBatch(ctx context.Context, file io.Reader, format string) error {
+func (j *JsonUniversalIngestor) IngestBatch(ctx context.Context, file io.Reader, format string) (*domain.IngestionResult, error) {
 	if format != "json" {
-		return fmt.Errorf("unsupported format for JsonIngestor: %s", format)
+		return nil, fmt.Errorf("unsupported format for JsonIngestor: %s", format)
 	}
 	return j.IngestStream(ctx, file)
 }
@@ -71,8 +96,9 @@ type rawPayload struct {
 	Value     json.Number `json:"value"`     // 使用 json.Number 避免精度丢失
 }
 
-func (j *JsonUniversalIngestor) decodeArray(decoder *json.Decoder) ([]domain.Reading, error) {
-	var results []domain.Reading
+func (j *JsonUniversalIngestor) decodeArray(ctx context.Context, decoder *json.Decoder, result *domain.IngestionResult) (*domain.IngestionResult, error) {
+	var buffer []domain.Reading
+	const batchSize = 100 // 简单的批处理缓冲
 
 	// while decoder.More()
 	for decoder.More() {
@@ -80,37 +106,40 @@ func (j *JsonUniversalIngestor) decodeArray(decoder *json.Decoder) ([]domain.Rea
 		if err := decoder.Decode(&p); err != nil {
 			return nil, fmt.Errorf("decode error inside array: %w", err)
 		}
+
+		result.Total++
 		r, err := j.mapToDomain(p)
 		if err != nil {
-			// 策略：遇到坏数据是报错还是跳过？
-			// 万能插头通常应该容错，这里我们记录错误但不中断流（演示目的），或者返回错误
-			// 这里选择记录错误并继续，或者如果您希望严格模式，则返回 err
-			fmt.Printf("Warning: skipping invalid item: %v\n", err)
+			// 策略：记录错误并继续
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("item %d skipped: %v", result.Total, err))
 			continue
 		}
-		results = append(results, r)
+
+		buffer = append(buffer, r)
+		result.Success++
+
+		// Flush buffer if full
+		if len(buffer) >= batchSize {
+			if err := j.downstream(ctx, buffer); err != nil {
+				return result, err
+			}
+			buffer = buffer[:0] // clear
+		}
+	}
+
+	// Flush remaining
+	if len(buffer) > 0 {
+		if err := j.downstream(ctx, buffer); err != nil {
+			return result, err
+		}
 	}
 
 	// Consume closing ']'
 	if _, err := decoder.Token(); err != nil {
-		return nil, err
+		return result, err
 	}
-	return results, nil
-}
-
-func (j *JsonUniversalIngestor) decodeObjectRemaining(decoder *json.Decoder) ([]domain.Reading, error) {
-	// 因为我们已经消费了第一个 '{'，如果不使用 Hack 手段，标准 Decode 会失败。
-	// 这里我们用一种流式属性解析的方法，或者更简单的：
-	// 在实际生产中，我们可以用 json.RawMessage 结合 Peek。
-	// 但为了代码简洁，且考虑到 decoder 已经前进，我们手动解析该对象的字段。
-	// *注意*: 在 Go 标准库中这比较繁琐。
-
-	// 替代方案：如果不预读 Token，直接 Decode(&val)，如果是指针 interface{} 会自动判断。
-	// 但我们想区分 array vs object。
-
-	// 重新设计 IngestStream 策略：
-	// 不预读 Token。直接 Decode 到 json.RawMessage，然后判断第一个字符。
-	return nil, fmt.Errorf("single object mode not fully implemented in this demo snippet due to decoder constraint, please use array format '[...]'")
+	return result, nil
 }
 
 // mapToDomain 将扁平 JSON 转换为领域对象

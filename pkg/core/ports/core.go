@@ -5,7 +5,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/renjie/prism/internal/core/domain"
+	"github.com/renjie/prism-core/pkg/core/domain"
 )
 
 // UniversalIngestor 万能插头 (Ingestion Layer)
@@ -13,10 +13,10 @@ import (
 // 职责: 接收任意格式、任意频率的数据，统一接入。
 type UniversalIngestor interface {
 	// IngestStream 接入实时流数据 (JSON, Binary, etc.)
-	IngestStream(ctx context.Context, stream io.Reader) error
+	IngestStream(ctx context.Context, stream io.Reader) (*domain.IngestionResult, error)
 
 	// IngestBatch 接入批量文件 (Excel, CSV)
-	IngestBatch(ctx context.Context, file io.Reader, format string) error
+	IngestBatch(ctx context.Context, file io.Reader, format string) (*domain.IngestionResult, error)
 }
 
 // EnergyDataStandardizer 能源数据标准化服务 (Core Capability)
