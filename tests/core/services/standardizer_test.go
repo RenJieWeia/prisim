@@ -7,6 +7,7 @@ import (
 
 	"github.com/renjie/prism/internal/core/domain"
 	"github.com/renjie/prism/internal/core/services"
+	"github.com/renjie/prism/internal/core/services/rules"
 )
 
 func TestCoreStandardizer(t *testing.T) {
@@ -14,7 +15,7 @@ func TestCoreStandardizer(t *testing.T) {
 	// Factor 10000 (4 decimal places)
 	// Repo nil (Stateless mode test)
 	// Rules: Monotonic (Prevent Decreases)
-	standardizer := services.NewCoreStandardizer(10000, nil, &domain.MonotonicRule{})
+	standardizer := services.NewCoreStandardizer(10000, nil, &rules.MonotonicRule{})
 
 	// Prepare Data with Issues
 	// 1. Normal (10:00, 100.0)

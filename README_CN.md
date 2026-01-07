@@ -81,6 +81,7 @@ ingestor.IngestStream(context.Background(), file)
 ```go
 import (
     "github.com/renjie/prism/internal/core/services"
+    "github.com/renjie/prism/internal/core/services/rules"
     "github.com/renjie/prism/internal/core/domain"
 )
 
@@ -89,12 +90,17 @@ import (
 // 2. 禁止单次变化超过 100.0 (JumpRule)
 // 3. 精度要求保留4位小数 (Factor = 10000)
 
+// 使用配置项构建规则链（推荐模式）
+ruleConfigs := []domain.RuleConfig{
+    {ID: "monotonic"},
+    {ID: "jump", Params: map[string]any{"max_threshold": 100.0}},
+}
+chain := rules.NewChain(ruleConfigs)
+
 standardizer := services.NewCoreStandardizer(
-    10000, // Precision Factor
-    nil,   // Repository (传 nil 用于纯计算模式)
-    // 动态注入规则链：
-    &domain.MonotonicRule{}, 
-    &domain.JumpRule{MaxThreshold: 100.0},
+    10000, 
+    nil,   
+    chain...,
 )
 ```
 

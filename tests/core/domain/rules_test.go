@@ -6,10 +6,11 @@ import (
 	"time"
 
 	"github.com/renjie/prism/internal/core/domain"
+	"github.com/renjie/prism/internal/core/services/rules"
 )
 
 func TestMonotonicRule(t *testing.T) {
-	rule := &domain.MonotonicRule{}
+	rule := &rules.MonotonicRule{}
 
 	// Case 1: Increasing - Pass
 	prev := &domain.Reading{Value: 100}
@@ -29,7 +30,7 @@ func TestMonotonicRule(t *testing.T) {
 }
 
 func TestJumpRule(t *testing.T) {
-	rule := &domain.JumpRule{MaxThreshold: 50}
+	rule := &rules.JumpRule{MaxThreshold: 50}
 
 	prev := &domain.Reading{Value: 100}
 
@@ -51,7 +52,7 @@ func TestJumpRule(t *testing.T) {
 
 func TestStagnationRule(t *testing.T) {
 	// Rule: Must change by at least 0.1
-	rule := &domain.StagnationRule{MinThreshold: 0.1}
+	rule := &rules.StagnationRule{MinThreshold: 0.1}
 
 	prev := &domain.Reading{Value: 100}
 
@@ -78,8 +79,8 @@ func TestStagnationRule(t *testing.T) {
 func TestChainIntegration(t *testing.T) {
 	// Setup chain: Monotonic AND MaxJump(100)
 	sanitizer := domain.NewSanitizer(
-		&domain.MonotonicRule{},
-		&domain.JumpRule{MaxThreshold: 100},
+		&rules.MonotonicRule{},
+		&rules.JumpRule{MaxThreshold: 100},
 	)
 
 	tBase := time.Now()

@@ -60,11 +60,14 @@ go test ./tests/...
 The `Standardizer` service cleans incoming raw data using a chain of injected rules.
 
 ```go
-// Example Configuration
-sanitizer := domain.NewSanitizer(
-    &domain.MonotonicRule{}, 
-    &domain.JumpRule{MaxThreshold: 100},
-)
+// Example Configuration via Factories
+ruleConfigs := []domain.RuleConfig{
+    {ID: "monotonic"},
+    {ID: "jump", Params: map[string]any{"max_threshold": 100.0}},
+}
+chain := rules.NewChain(ruleConfigs)
+
+sanitizer := domain.NewSanitizer(chain...)
 ```
 
 ### domain.Unifier
