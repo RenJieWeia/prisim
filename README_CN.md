@@ -51,8 +51,8 @@ prisim/
 import (
     "context"
     "os"
-    "renjie.prism/internal/core/services"
-    "renjie.prism/internal/core/domain"
+    "github.com/renjie/prism/internal/core/services"
+    "github.com/renjie/prism/internal/core/domain"
 )
 
 // 定义数据接收回调（模拟“下游”处理）
@@ -80,8 +80,8 @@ ingestor.IngestStream(context.Background(), file)
 
 ```go
 import (
-    "renjie.prism/internal/core/services"
-    "renjie.prism/internal/core/domain"
+    "github.com/renjie/prism/internal/core/services"
+    "github.com/renjie/prism/internal/core/domain"
 )
 
 // 场景：我们需要严格的数据质量控制

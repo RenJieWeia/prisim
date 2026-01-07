@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"renjie.prism/internal/core/domain"
-	"renjie.prism/internal/core/services"
+	"github.com/renjie/prism/internal/core/domain"
+	"github.com/renjie/prism/internal/core/services"
 )
 
 func TestCoreStandardizer(t *testing.T) {

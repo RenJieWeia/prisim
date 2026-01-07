@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"renjie.prism/internal/core/domain"
+	"github.com/renjie/prism/internal/core/domain"
 )
 
 func TestMonotonicRule(t *testing.T) {

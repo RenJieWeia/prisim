@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"renjie.prism/internal/core/domain"
-	"renjie.prism/internal/core/services"
+	"github.com/renjie/prism/internal/core/domain"
+	"github.com/renjie/prism/internal/core/services"
 )
 
 func TestJsonUniversalIngestor(t *testing.T) {

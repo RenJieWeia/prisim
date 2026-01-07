@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"renjie.prism/internal/core/domain"
-	"renjie.prism/internal/core/ports"
+	"github.com/renjie/prism/internal/core/domain"
+	"github.com/renjie/prism/internal/core/ports"
 )
 
 // CoreStandardizer 核心数据标准化服务

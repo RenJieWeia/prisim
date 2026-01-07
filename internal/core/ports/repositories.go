@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"renjie.prism/internal/core/domain"
+	"github.com/renjie/prism/internal/core/domain"
 )
 
 // StandardReadingRepository 标准读数仓储接口

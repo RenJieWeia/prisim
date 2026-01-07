@@ -5,7 +5,7 @@ import (
 	"io"
 	"time"
 
-	"renjie.prism/internal/core/domain"
+	"github.com/renjie/prism/internal/core/domain"
 )
 
 // UniversalIngestor 万能插头 (Ingestion Layer)
