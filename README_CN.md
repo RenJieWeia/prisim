@@ -7,39 +7,44 @@
 ## 🌟 核心特性
 
 - **通用摄入 (Universal Ingestion)**: 
-  - 支持基于流 (Stream) 的 JSON 解析，能够高效处理大规模数据集，内存占用极低。
+  - 支持基于流 (Stream) 的 **JSON** 解析，以及 **CSV** 格式支持。能够高效处理大规模数据集，内存占用极低。
 - **稳健的数据清洗流水线 (Robust Pipeline)**:
-  - **策略模式 (Strategy Pattern)**: 清洗规则完全解耦，支持热插拔。
+  - **策略模式 (Strategy Pattern)**: 清洗规则完全解耦，通过 `RuleFactory` 支持热插拔。
   - **内置规则库**:
-    - `MonotonicRule`: 单调性校验，防止累积读数出现负增长或异常回退。
-    - `JumpRule`: 跳变检测，过滤掉物理上不可能的数值激增。
-    - `StagnationRule`: 停滞检测，识别传感器死值或故障。
-  - **责任链 (Chain of Responsibility)**: 通过 `Sanitizer` 串行执行配置的过滤器。
+    - `RangeRule`: 范围检查，支持 Min/Max 阈值校验与自动修正 (Clamping)。
+    - *可扩展*: 预定义了 `Rate` (变化率) 和 `Trend` (趋势) 规则类型接口，便于后续扩展。
+  - **责任链 (Chain of Responsibility)**: 通过 `Sanitizer` 服务串行执行配置的过滤器。
 - **数据标准化 (Standardization)**:
   - **精度统一 (Unifier)**: 将浮点数转换为高精度的整型定点数 (Scaled Integer)，彻底消除浮点运算误差 (例如 kWh -> micro-kWh)。
   - **时间对齐 (Aligner)**: 将散乱的时间点对齐到标准的整点快照 (Snapshot)。
 - **架构设计**:
-  - **Domain (领域层)**: 纯粹的业务逻辑 (`pkg/core/domain`)，定义核心接口 (`CleaningRule`, `Sanitizer`, `Unifier`).
-  - **Ports (端口层)**: 定义输入 (API/Ingestor) 和输出 (Repository) 的契约.
-  - **Services (服务层)**: 编排领域逻辑与端口的胶水层 (`pkg/core/services`).
+  - **Domain (领域层)**: 核心业务实体与接口定义 (`pkg/core/domain`)。
+  - **Services (服务层)**: 业务流程编排 (`pkg/core/services`)，包含 Sanitizer 与 Standardizer 实现。
+  - **Adapters (适配层)**: 外部交互实现 (`pkg/adapters`)，包含 Ingestors 和 Factory。
 
 ## 📂 项目结构
 
 ```
 prism-core/
 ├── pkg/
+│   ├── adapters/      # 适配器层 (外部交互)
+│   │   ├── factory/      # 工厂模式实现 (如 RuleFactory)
+│   │   └── ingest/       # 数据摄入实现 (CSV, JSON)
 │   └── core/
-│       ├── domain/        # 核心业务逻辑 (实体 & 规则)
+│       ├── domain/        # 核心业务逻辑 (实体 & 接口)
 │       │   ├── aligner.go    # 时间对齐逻辑
-│       │   ├── sanitizer.go  # 清洗器 (责任链)
 │       │   ├── unifier.go    # 精度转换器
-│       │   └── rules.go      # 具体清洗规则实现
+│       │   ├── rule.go       # 规则定义
+│       │   └── ...
 │       ├── ports/         # 接口定义 (驱动/被驱动端口)
 │       └── services/      # 应用服务 (流程编排)
+│           ├── sanitizer.go  # 清洗器 (责任链)
+│           ├── rules/        # 具体清洗规则实现 (e.g. RangeRule)
+│           └── ...
 ├── tests/                 # 外部集成测试
 │   ├── core/
-│   │   ├── domain/        # 领域逻辑测试
-│   │   └── services/      # 服务层测试
+│   │   ├── services/      # 服务层测试
+│   │   └── ...
 └── testdata/              # 测试用例样本数据
 ```
 
@@ -86,27 +91,25 @@ ingestor.IngestStream(context.Background(), file)
 
 ```go
 import (
+    "time"
     "github.com/renjie/prism-core/pkg/core/services"
+    "github.com/renjie/prism-core/pkg/core/services/rules"
     "github.com/renjie/prism-core/pkg/core/domain"
 )
 
-// 声明本地规则实现 (或从其他包导入)
-type MyMonotonicRule struct{}
-func (r *MyMonotonicRule) Check(prev *domain.Reading, curr domain.Reading) (bool, error) {
-    if prev != nil && curr.Value < prev.Value {
-        return false, fmt.Errorf("regression")
-    }
-    return true, nil
+// 使用内置的 RangeRule (范围检查)
+rangeRule := &rules.RangeRule{
+    Min:    0.0,
+    Max:    1000.0,
+    Action: domain.ActionReject, // 超出范围直接丢弃
 }
 
 // 场景：我们需要严格的数据质量控制
 // 使用 Functional Options 配置服务
 standardizer := services.NewCoreStandardizer(
     services.WithPrecision(10000), 
-    services.WithCleaningRules(&MyMonotonicRule{}),
+    services.WithCleaningRules(rangeRule),
     services.WithAlignment(15*time.Minute, 1*time.Minute),
-)
-``` 
 )
 ```
 
@@ -115,7 +118,7 @@ standardizer := services.NewCoreStandardizer(
 ```go
 rawReadings := []domain.Reading{
     {Timestamp: t1, Value: 100.0},
-    {Timestamp: t2, Value: 90.0}, // 将被 MonotonicRule 过滤
+    {Timestamp: t2, Value: -5.0}, // 将被 RangeRule 过滤
     {Timestamp: t3, Value: 105.0},
 }
 
