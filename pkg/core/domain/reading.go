@@ -37,4 +37,8 @@ type StandardReading struct {
 	ValueDisplay float64      `json:"value_display"` // 展示用浮点值
 	Quality      QualityState `json:"quality"`       // 数据质量标记
 	SourceType   ReadingType  `json:"source_type"`   // 数据来源类型
+
+	// 新增: 数据治理与冲突解决字段 (Phase 1 Backfilling Support)
+	IngestedAt time.Time `json:"ingested_at"` // 物理入库时间 (Physical Time)
+	Priority   int       `json:"priority"`    // 冲突优先级 (1000=Manual Fix, 100=Realtime, 50=Late Batch)
 }

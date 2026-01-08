@@ -13,15 +13,15 @@ import (
 // Define a test-specific rule
 type monotonicTestRule struct{}
 
-func (r *monotonicTestRule) Check(prev *domain.Reading, curr domain.Reading) (bool, error) {
+func (r *monotonicTestRule) Check(prev *domain.Reading, curr domain.Reading) (domain.Reading, bool, error) {
 	if curr.Value < 0 {
-		return false, fmt.Errorf("negative")
+		return curr, false, fmt.Errorf("negative")
 	}
 	// Strict monotonic for test: no regression allowed
 	if prev != nil && curr.Value < prev.Value {
-		return false, fmt.Errorf("calc regression")
+		return curr, false, fmt.Errorf("calc regression")
 	}
-	return true, nil
+	return curr, true, nil
 }
 
 func TestCoreStandardizer(t *testing.T) {

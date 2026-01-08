@@ -20,10 +20,26 @@ type CoreStandardizer struct {
 	standardInterval time.Duration
 	concurrencyLimit int                             // 并发限制
 	repo             ports.StandardReadingRepository // 可选持久层依赖
+	ruleRepo         ports.CleaningRuleRepository    // 可选规则持久层
+	quarantineRepo   ports.QuarantineRepository      // 可选隔离区持久层 (for Bad Data)
 }
 
 // StandardizerOption 定义配置选项函数 (Functional Option Pattern)
 type StandardizerOption func(*CoreStandardizer)
+
+// WithQuarantineRepository 设置隔离区仓储依赖
+func WithQuarantineRepository(repo ports.QuarantineRepository) StandardizerOption {
+	return func(s *CoreStandardizer) {
+		s.quarantineRepo = repo
+	}
+}
+
+// WithRuleRepository 设置规则持久层依赖
+func WithRuleRepository(repo ports.CleaningRuleRepository) StandardizerOption {
+	return func(s *CoreStandardizer) {
+		s.ruleRepo = repo
+	}
+}
 
 // WithPrecision 设置精度因子 (默认 10000)
 func WithPrecision(factor int) StandardizerOption {
@@ -98,7 +114,34 @@ func (s *CoreStandardizer) ProcessAndStandardize(ctx context.Context, rawReading
 	// Step 1: A. 数据清洗 (替别人做“脏活累活”)
 	// 剔除空值、负值、重复值和异常跳变
 	// 这一步是批量操作，因为清洗依赖上下文（如前后值的跳变）
-	cleanReadings := s.sanitizer.Clean(rawReadings)
+	var cleanReadings []domain.Reading
+	var quarantinedReadings []domain.QuarantineReading
+
+	if s.ruleRepo != nil {
+		// 动态加载规则清洗
+		var err error
+		cleanReadings, quarantinedReadings, err = s.cleanWithDynamicRules(ctx, rawReadings)
+		if err != nil {
+			// Fallback or error? For now log and return partial?
+			// To be safe, return error
+			return nil, fmt.Errorf("dynamic cleaning failed: %w", err)
+		}
+	} else {
+		// 使用默认规则清洗
+		cleanReadings, quarantinedReadings = s.sanitizer.Clean(rawReadings)
+	}
+
+	// 异步保存隔离区数据 (以免阻塞主流程)
+	if len(quarantinedReadings) > 0 && s.quarantineRepo != nil {
+		go func(qs []domain.QuarantineReading) {
+			// use a detached context or background
+			// strict correctness requires handling context cancellation, but for simplicity here:
+			bgCtx := context.Background()
+			for _, q := range qs {
+				_ = s.quarantineRepo.Save(bgCtx, q) // Ignored error for now
+			}
+		}(quarantinedReadings)
+	}
 
 	// Step 3 (Optimization): Concurrency Strategy (Sharding by DeviceID)
 	deviceGroups := make(map[string][]domain.Reading)
@@ -157,7 +200,7 @@ func (s *CoreStandardizer) ProcessAndStandardize(ctx context.Context, rawReading
 				snapshot := s.aligner.FindSnapshot(devReadings, t)
 				if snapshot != nil {
 					// Step 2: B. 单条转换
-					sr := s.standardizeOne(*snapshot)
+					sr := s.standardizeOne(ctx, *snapshot)
 					sr.Timestamp = t // Force alignment to the grid time
 					groupStandards = append(groupStandards, sr)
 				}
@@ -179,7 +222,8 @@ func (s *CoreStandardizer) ProcessAndStandardize(ctx context.Context, rawReading
 
 	// Step 3: Persistence (if configured)
 	if s.repo != nil && len(standards) > 0 {
-		if err := s.repo.SaveBatch(ctx, standards); err != nil {
+		// Use Priority-based upsert strategy to respect data governance rules
+		if err := s.repo.SaveBatch(ctx, standards, ports.UpsertStrategyHighPriorityWins); err != nil {
 			return nil, fmt.Errorf("failed to persist standards: %w", err)
 		}
 	}
@@ -188,9 +232,15 @@ func (s *CoreStandardizer) ProcessAndStandardize(ctx context.Context, rawReading
 }
 
 // standardizeOne 封装单条数据的转换逻辑 (SR - Single Responsibility: Mapping)
-func (s *CoreStandardizer) standardizeOne(r domain.Reading) domain.StandardReading {
+func (s *CoreStandardizer) standardizeOne(ctx context.Context, r domain.Reading) domain.StandardReading {
 	// 1. 精度对齐
 	valScaled := s.unifier.ToScaled(r.Value)
+
+	// Determine Priority from Context
+	priority := domain.IngestStrategyRealtime.GetPriority() // Default
+	if info, ok := domain.FromContext(ctx); ok {
+		priority = info.Strategy.GetPriority()
+	}
 
 	// 2. 结构封装
 	return domain.StandardReading{
@@ -201,5 +251,9 @@ func (s *CoreStandardizer) standardizeOne(r domain.Reading) domain.StandardReadi
 		ValueDisplay: r.Value,
 		SourceType:   domain.ReadingTypeStandard,
 		Quality:      domain.QualityValid, // 经过清洗剩下的都是有效值
+
+		// Backfilling & Governance Support
+		IngestedAt: time.Now(),
+		Priority:   priority,
 	}
 }
