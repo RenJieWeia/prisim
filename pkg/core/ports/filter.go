@@ -2,10 +2,26 @@ package ports
 
 import "github.com/renjie/prism-core/pkg/core/domain"
 
+// CleaningContext 清洗规则执行时的上下文信息
+type CleaningContext struct {
+	Previous *domain.Reading // 前一条读数 (可能为nil，表示第一条数据)
+	// 可扩展其他上下文字段，如批次信息、设备元数据等
+}
+
+// CheckResult 清洗规则检查的结果
+type CheckResult struct {
+	Reading   domain.Reading // 结果读数 (可能是原值或修正后的值)
+	Passed    bool           // 是否通过检查
+	Corrected bool           // 是否进行了修正
+	Reason    string         // 失败或修正的原因描述
+}
+
 // CleaningRule 清洗规则接口
 // 这是一个策略接口，具体的业务规则（如单调性、跳变检测）由外部实现注入
 type CleaningRule interface {
-	Check(prev *domain.Reading, curr domain.Reading) (domain.Reading, bool, error)
+	// Check 检查当前读数是否满足规则
+	// 返回 CheckResult 包含完整的检查结果信息
+	Check(ctx CleaningContext, curr domain.Reading) CheckResult
 }
 
 // Sanitizer 数据清洗器接口
@@ -14,5 +30,6 @@ type Sanitizer interface {
 	// Clean 执行清洗逻辑，返回:
 	// 1. clean: 通过规则的良品数据 (可能经过修正)
 	// 2. quarantined: 违反规则被拒绝的次品数据 (包含拒绝原因)
+	// 注意: 返回的 clean 数据已按时间戳升序排列
 	Clean(readings []domain.Reading) (clean []domain.Reading, quarantined []domain.QuarantineReading)
 }

@@ -19,6 +19,7 @@ func NewSanitizer(rules ...ports.CleaningRule) ports.Sanitizer {
 }
 
 // Clean 实现 ports.Sanitizer 接口
+// 返回的 clean 数据已按时间戳升序排列
 func (s *ChainSanitizer) Clean(readings []domain.Reading) ([]domain.Reading, []domain.QuarantineReading) {
 	if len(readings) == 0 {
 		return nil, nil
@@ -52,23 +53,24 @@ func (s *ChainSanitizer) Clean(readings []domain.Reading) ([]domain.Reading, []d
 		passed := true
 		failReason := ""
 
+		// 构建清洗上下文
+		cleanCtx := ports.CleaningContext{
+			Previous: prev,
+		}
+
 		// 每次进入规则检查时，使用当前的 curr 副本
 		// 这样不同规则可以像流水线一样依次修改数据 (Pipe and Filter)
 		tempReading := curr
 
 		for _, rule := range s.rules {
-			corrected, ok, err := rule.Check(prev, tempReading)
-			if !ok {
+			result := rule.Check(cleanCtx, tempReading)
+			if !result.Passed {
 				passed = false
-				if err != nil {
-					failReason = err.Error()
-				} else {
-					failReason = "Rule validation failed"
-				}
+				failReason = result.Reason
 				break
 			}
 			// 将这一步可能修正过的结果传递给下一个规则
-			tempReading = corrected
+			tempReading = result.Reading
 		}
 
 		if passed {

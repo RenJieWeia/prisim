@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -66,8 +67,13 @@ func (s *CoreStandardizer) cleanWithDynamicRules(ctx context.Context, readings [
 	wg.Wait()
 	close(errChan)
 
-	if len(errChan) > 0 {
-		return nil, nil, <-errChan
+	// 收集所有错误
+	var errs []error
+	for err := range errChan {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return nil, nil, errors.Join(errs...)
 	}
 
 	return result, quarantined, nil

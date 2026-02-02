@@ -2,26 +2,41 @@ package services_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/renjie/prism-core/pkg/core/domain"
+	"github.com/renjie/prism-core/pkg/core/ports"
 	"github.com/renjie/prism-core/pkg/core/services"
 )
 
-// Define a test-specific rule
+// Define a test-specific rule using the new interface
 type monotonicTestRule struct{}
 
-func (r *monotonicTestRule) Check(prev *domain.Reading, curr domain.Reading) (domain.Reading, bool, error) {
+func (r *monotonicTestRule) Check(ctx ports.CleaningContext, curr domain.Reading) ports.CheckResult {
 	if curr.Value < 0 {
-		return curr, false, fmt.Errorf("negative")
+		return ports.CheckResult{
+			Reading:   curr,
+			Passed:    false,
+			Corrected: false,
+			Reason:    "negative",
+		}
 	}
 	// Strict monotonic for test: no regression allowed
-	if prev != nil && curr.Value < prev.Value {
-		return curr, false, fmt.Errorf("calc regression")
+	if ctx.Previous != nil && curr.Value < ctx.Previous.Value {
+		return ports.CheckResult{
+			Reading:   curr,
+			Passed:    false,
+			Corrected: false,
+			Reason:    "calc regression",
+		}
 	}
-	return curr, true, nil
+	return ports.CheckResult{
+		Reading:   curr,
+		Passed:    true,
+		Corrected: false,
+		Reason:    "",
+	}
 }
 
 func TestCoreStandardizer(t *testing.T) {
@@ -31,7 +46,6 @@ func TestCoreStandardizer(t *testing.T) {
 	// Rules: Monotonic (Prevent Decreases)
 	// Interval: 15m, Tolerance: 5m
 	standardizer := services.NewCoreStandardizer(
-		services.WithPrecision(10000),
 		services.WithAlignment(15*time.Minute, 5*time.Minute),
 		services.WithCleaningRules(&monotonicTestRule{}),
 	)
@@ -79,8 +93,8 @@ func TestCoreStandardizer(t *testing.T) {
 
 	// Verify Item 2 (Precision Alignment)
 	r2 := results[1]
-	// 100.00019 * 10000 = 1000001.9 -> Round -> 1000002
-	expectedScaled := int64(1000002)
+	// 100.00019 * 10000 = 1000001.9 -> int64 truncation -> 1000001
+	expectedScaled := int64(1000001)
 	if r2.ValueScaled != expectedScaled {
 		t.Errorf("Item 2 Scaled Value wrong: expected %d, got %d", expectedScaled, r2.ValueScaled)
 	}

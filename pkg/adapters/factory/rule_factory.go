@@ -26,13 +26,20 @@ var (
 // GetRuleFactory returns the singleton instance
 func GetRuleFactory() *RuleFactory {
 	once.Do(func() {
-		instance = &RuleFactory{
-			builders: make(map[domain.RuleType]RuleBuilder),
-		}
-		// Register built-in rules
-		instance.Register(domain.RuleTypeRange, buildRangeRule)
+		instance = NewRuleFactory()
 	})
 	return instance
+}
+
+// NewRuleFactory creates a new RuleFactory instance with built-in rules registered
+// This constructor is useful for testing where you need isolated factory instances
+func NewRuleFactory() *RuleFactory {
+	f := &RuleFactory{
+		builders: make(map[domain.RuleType]RuleBuilder),
+	}
+	// Register built-in rules
+	f.Register(domain.RuleTypeRange, buildRangeRule)
+	return f
 }
 
 // Register adds or overrides a rule builder

@@ -14,9 +14,13 @@
     - `RangeRule`: 范围检查，支持 Min/Max 阈值校验与自动修正 (Clamping)。
     - *可扩展*: 预定义了 `Rate` (变化率) 和 `Trend` (趋势) 规则类型接口，便于后续扩展。
   - **责任链 (Chain of Responsibility)**: 通过 `Sanitizer` 服务串行执行配置的过滤器。
+  - **结构化结果**: 规则返回 `CheckResult` 结构体，包含修正状态和原因说明。
 - **数据标准化 (Standardization)**:
-  - **精度统一 (Unifier)**: 将浮点数转换为高精度的整型定点数 (Scaled Integer)，彻底消除浮点运算误差 (例如 kWh -> micro-kWh)。
-  - **时间对齐 (Aligner)**: 将散乱的时间点对齐到标准的整点快照 (Snapshot)。
+  - **精度统一**: 将浮点数转换为高精度的整型定点数 (Scaled Integer)，默认 10000 倍精度 (支持 4 位小数)。
+  - **时间对齐 (Aligner)**: 使用**二分查找算法** O(log n) 将散乱的时间点对齐到标准的整点快照。
+- **并发安全**:
+  - 异步操作带有超时控制和错误日志。
+  - 使用 `errors.Join()` 聚合并发错误。
 - **架构设计**:
   - **Domain (领域层)**: 核心业务实体与接口定义 (`pkg/core/domain`)。
   - **Services (服务层)**: 业务流程编排 (`pkg/core/services`)，包含 Sanitizer 与 Standardizer 实现。
@@ -106,8 +110,8 @@ rangeRule := &rules.RangeRule{
 
 // 场景：我们需要严格的数据质量控制
 // 使用 Functional Options 配置服务
+// 精度转换已内置，默认 ScaleFactor = 10000
 standardizer := services.NewCoreStandardizer(
-    services.WithPrecision(10000), 
     services.WithCleaningRules(rangeRule),
     services.WithAlignment(15*time.Minute, 1*time.Minute),
 )

@@ -33,24 +33,38 @@ graph TD
 ### 2.1 Piped Processing (管道与过滤器)
 我们的 `Sanitizer` 不是简单的过滤器，它支持**修改**数据。
 *   入参：`readings []Reading`
-*   出参 1：`clean []Reading` (可能比入参少，也可能值被修改过)
+*   出参 1：`clean []Reading` (可能比入参少，也可能值被修改过，**已按时间戳升序排列**)
 *   出参 2：`quarantined []QuarantineReading` (被剔除的数据)
 
-### 2.2 规则接口定义
+### 2.2 规则接口定义 (v2.0 新接口)
 位于 `pkg/core/ports/filter.go`。
 
 ```go
+// CleaningContext 清洗规则执行时的上下文信息
+type CleaningContext struct {
+    Previous *domain.Reading // 前一条读数 (可能为nil，表示第一条数据)
+    // 可扩展其他上下文字段，如批次信息、设备元数据等
+}
+
+// CheckResult 清洗规则检查的结果
+type CheckResult struct {
+    Reading   domain.Reading // 结果读数 (可能是原值或修正后的值)
+    Passed    bool           // 是否通过检查
+    Corrected bool           // 是否进行了修正
+    Reason    string         // 失败或修正的原因描述
+}
+
 type CleaningRule interface {
-    // Check 检查并可能修正当前读数
-    // prev: 上一个有效读数指针（用于状态性检查，如增量验证）
-    // curr: 当前读数
-    // 返回值:
-    //   Reading: 修正后的读数 (仅当 ok=true 有效)
-    //   bool:    是否通过 (true=Pass/Corrected, false=Reject)
-    //   error:   拒绝原因 (仅当 ok=false 有效)
-    Check(prev *domain.Reading, curr domain.Reading) (domain.Reading, bool, error)
+    // Check 检查当前读数是否满足规则
+    // 返回 CheckResult 包含完整的检查结果信息
+    Check(ctx CleaningContext, curr domain.Reading) CheckResult
 }
 ```
+
+**v2.0 接口改进说明:**
+- 使用 `CleaningContext` 结构体替代 `*Reading` 指针，便于扩展上下文信息
+- 使用 `CheckResult` 结构体替代多返回值，提供更丰富的结果信息
+- 新增 `Corrected` 字段，明确标识数据是否被修正过
 
 ## 3. 实战：开发一个“单调递增规则” (Monotonic Rule)
 
@@ -65,32 +79,49 @@ type MonotonicRule struct {
 }
 ```
 
-### Step 2: 实现 Check 方法
+### Step 2: 实现 Check 方法 (使用新接口)
 
 ```go
-func (r *MonotonicRule) Check(prev *domain.Reading, curr domain.Reading) (domain.Reading, bool, error) {
+func (r *MonotonicRule) Check(ctx ports.CleaningContext, curr domain.Reading) ports.CheckResult {
     // 第一条数据无法判断趋势，默认通过
-    if prev == nil {
-        return curr, true, nil
+    if ctx.Previous == nil {
+        return ports.CheckResult{
+            Reading:   curr,
+            Passed:    true,
+            Corrected: false,
+        }
     }
     
     // 如果当前值 < 上一次的值
-    if curr.Value < prev.Value {
+    if curr.Value < ctx.Previous.Value {
         // CASE A: 规则配置为 REJECT
         if r.Action == domain.ActionReject {
-            return curr, false, fmt.Errorf("value regression detected: %.2f < %.2f", curr.Value, prev.Value)
+            return ports.CheckResult{
+                Reading:   curr,
+                Passed:    false,
+                Corrected: false,
+                Reason:    fmt.Sprintf("value regression detected: %.2f < %.2f", curr.Value, ctx.Previous.Value),
+            }
         }
         
         // CASE B: 规则配置为 CORRECT (强制拉平)
         if r.Action == domain.ActionCorrect {
             fixed := curr
-            fixed.Value = prev.Value // 简单的修正策略：保持上一刻的值
-            fixed.Quality = domain.QualityCorrected
-            return fixed, true, nil
+            fixed.Value = ctx.Previous.Value // 简单的修正策略：保持上一刻的值
+            return ports.CheckResult{
+                Reading:   fixed,
+                Passed:    true,
+                Corrected: true,
+                Reason:    fmt.Sprintf("value corrected from %.2f to %.2f", curr.Value, ctx.Previous.Value),
+            }
         }
     }
     
-    return curr, true, nil
+    return ports.CheckResult{
+        Reading:   curr,
+        Passed:    true,
+        Corrected: false,
+    }
 }
 ```
 
@@ -98,11 +129,14 @@ func (r *MonotonicRule) Check(prev *domain.Reading, curr domain.Reading) (domain
 在 `pkg/adapters/factory/rule_factory.go` 中注册，使其可以通过 JSON 配置动态加载。
 
 ```go
-func init() {
-    GetRuleFactory().Register(domain.RuleTypeMonotonic, func(params map[string]any, action domain.RuleAction) (ports.CleaningRule, error) {
-        return &rules.MonotonicRule{Action: action}, nil
-    })
-}
+// 方式1: 使用单例 (生产环境)
+GetRuleFactory().Register(domain.RuleTypeMonotonic, func(params map[string]any, action domain.RuleAction) (ports.CleaningRule, error) {
+    return &rules.MonotonicRule{Action: action}, nil
+})
+
+// 方式2: 使用独立实例 (测试环境，提高可测试性)
+factory := NewRuleFactory() // 创建独立实例
+factory.Register(domain.RuleTypeMonotonic, builder)
 ```
 
 ## 4. 隔离区数据 (Quarantine Data)

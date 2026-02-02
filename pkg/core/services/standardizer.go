@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -15,8 +17,7 @@ import (
 // 实现了 EnergyDataStandardizer 接口
 type CoreStandardizer struct {
 	sanitizer        ports.Sanitizer
-	unifier          domain.Unifier
-	aligner          domain.Aligner
+	aligner          ports.Aligner
 	standardInterval time.Duration
 	concurrencyLimit int                             // 并发限制
 	repo             ports.StandardReadingRepository // 可选持久层依赖
@@ -38,13 +39,6 @@ func WithQuarantineRepository(repo ports.QuarantineRepository) StandardizerOptio
 func WithRuleRepository(repo ports.CleaningRuleRepository) StandardizerOption {
 	return func(s *CoreStandardizer) {
 		s.ruleRepo = repo
-	}
-}
-
-// WithPrecision 设置精度因子 (默认 10000)
-func WithPrecision(factor int) StandardizerOption {
-	return func(s *CoreStandardizer) {
-		s.unifier = domain.NewUnifier(factor)
 	}
 }
 
@@ -85,7 +79,6 @@ func NewCoreStandardizer(opts ...StandardizerOption) ports.EnergyDataStandardize
 	// 默认配置
 	s := &CoreStandardizer{
 		sanitizer:        NewSanitizer(),                 // 默认无规则
-		unifier:          domain.NewUnifier(10000),       // 默认精度 4 位小数
 		aligner:          domain.NewAligner(time.Minute), // 默认容差 1m
 		standardInterval: 15 * time.Minute,               // 默认间隔 15m
 		concurrencyLimit: 100,                            // 默认并发 100
@@ -134,11 +127,18 @@ func (s *CoreStandardizer) ProcessAndStandardize(ctx context.Context, rawReading
 	// 异步保存隔离区数据 (以免阻塞主流程)
 	if len(quarantinedReadings) > 0 && s.quarantineRepo != nil {
 		go func(qs []domain.QuarantineReading) {
-			// use a detached context or background
-			// strict correctness requires handling context cancellation, but for simplicity here:
-			bgCtx := context.Background()
+			// 使用带超时的上下文，避免无限阻塞
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
 			for _, q := range qs {
-				_ = s.quarantineRepo.Save(bgCtx, q) // Ignored error for now
+				if err := s.quarantineRepo.Save(ctx, q); err != nil {
+					slog.Error("failed to save quarantine reading",
+						"device_id", q.Reading.DeviceInfo.ID,
+						"timestamp", q.Reading.Timestamp,
+						"reason", q.Reason,
+						"error", err)
+				}
 			}
 		}(quarantinedReadings)
 	}
@@ -165,14 +165,15 @@ func (s *CoreStandardizer) ProcessAndStandardize(ctx context.Context, rawReading
 			defer wg.Done()
 			defer func() { <-sem }() // Release token
 
-			// Sort by timestamp ensures correct range determination
-			sort.Slice(devReadings, func(i, j int) bool {
-				return devReadings[i].Timestamp.Before(devReadings[j].Timestamp)
-			})
-
 			if len(devReadings) == 0 {
 				return
 			}
+
+			// 注意: 数据已经在 Sanitizer.Clean() 中按时间排序
+			// 但按设备分组后可能打乱顺序，需要重新排序
+			sort.Slice(devReadings, func(i, j int) bool {
+				return devReadings[i].Timestamp.Before(devReadings[j].Timestamp)
+			})
 
 			// Step C: Frequency Alignment (Time Alignment)
 			// Generate time grid based on standard interval
@@ -216,8 +217,13 @@ func (s *CoreStandardizer) ProcessAndStandardize(ctx context.Context, rawReading
 	wg.Wait()
 	close(errChan)
 
-	if len(errChan) > 0 {
-		return nil, <-errChan // Return first error
+	// 收集所有错误
+	var errs []error
+	for err := range errChan {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	// Step 3: Persistence (if configured)
@@ -231,23 +237,27 @@ func (s *CoreStandardizer) ProcessAndStandardize(ctx context.Context, rawReading
 	return standards, nil
 }
 
+// DefaultScaleFactor 默认精度因子 (支持4位小数精度)
+const DefaultScaleFactor = 10000
+
 // standardizeOne 封装单条数据的转换逻辑 (SR - Single Responsibility: Mapping)
 func (s *CoreStandardizer) standardizeOne(ctx context.Context, r domain.Reading) domain.StandardReading {
-	// 1. 精度对齐
-	valScaled := s.unifier.ToScaled(r.Value)
-
 	// Determine Priority from Context
 	priority := domain.IngestStrategyRealtime.GetPriority() // Default
 	if info, ok := domain.FromContext(ctx); ok {
 		priority = info.Strategy.GetPriority()
 	}
 
+	// 精度转换: 浮点数 -> 高精度整型
+	// 例如: 123.4567 * 10000 = 1234567
+	scaledValue := int64(r.Value * float64(DefaultScaleFactor))
+
 	// 2. 结构封装
 	return domain.StandardReading{
 		DeviceID:     r.DeviceInfo.ID,
 		Timestamp:    r.Timestamp,
-		ValueScaled:  valScaled,
-		ScaleFactor:  s.unifier.GetScaleFactor(),
+		ValueScaled:  scaledValue,
+		ScaleFactor:  DefaultScaleFactor,
 		ValueDisplay: r.Value,
 		SourceType:   domain.ReadingTypeStandard,
 		Quality:      domain.QualityValid, // 经过清洗剩下的都是有效值

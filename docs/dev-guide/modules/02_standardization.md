@@ -20,7 +20,22 @@ graph LR
 
 Aligner 的目标是将离散的物理时间 T 映射到标准的逻辑时间 Grid。
 
-**算法逻辑 (Nearest Neighbor with Tolerance):**
+**算法逻辑 (二分查找 + Tolerance):**
+
+时间复杂度: **O(log n)**，相比旧版的 O(n) 线性扫描大幅提升性能。
+
+```go
+// 核心实现位于 pkg/core/domain/aligner.go
+func (t *TimeAligner) FindSnapshot(readings []Reading, target time.Time) *Reading {
+    // 1. 二分查找: 找到第一个 Timestamp >= target 的位置
+    idx := sort.Search(len(readings), func(i int) bool {
+        return !readings[i].Timestamp.Before(target)
+    })
+    
+    // 2. 检查 idx 和 idx-1，取时间差更小的那个
+    // 3. 只有当时间差 <= Tolerance 时才返回结果
+}
+```
 
 假设 Standard Interval = 15分钟。
 Grid Points: 10:00, 10:15, 10:30。
@@ -28,9 +43,9 @@ Grid Points: 10:00, 10:15, 10:30。
 *   **Case 1 (完美匹配)**: 读数时间 10:00:00 -> 映射到 10:00
 *   **Case 2 (允许误差内)**: 读数时间 10:01:05 -> 映射到 10:00 (如果 Tolerance > 1min)
 *   **Case 3 (冲突)**: 10:01 有读数A, 10:02 有读数B。
-    *   Aligner 会选择由外部逻辑预处理后的结果，或者简单地取最近的一个。
+    *   Aligner 会选择距离 target 更近的那个。
 
-### 2.2 Unifier (度量衡与精度)
+### 2.2 精度转换 (Precision Conversion)
 
 为什么我们使用 `int64` 存储 `ValueScaled`？
 
@@ -40,10 +55,24 @@ val := 0.1 + 0.2 // = 0.30000000000000004
 ```
 
 在金融和高精度计量领域，浮点数是不可接受的。
-我们使用 `ScaleFactor` (比如 10000):
+
+**内置精度转换 (DefaultScaleFactor = 10000)**:
+
+在 `pkg/core/services/standardizer.go` 中定义：
+
+```go
+const DefaultScaleFactor = 10000
+
+// 转换逻辑
+scaledValue := int64(r.Value * float64(DefaultScaleFactor))
+// 例如: 100.1234 -> 1001234
+```
+
 *   存储值: 100.1234 -> `1001234`
 *   计算: 所有的加减乘除都在 int64 域进行，速度快且精度绝对准确。
-*   展示: 只在最后 UI 展示时除以 Factor。
+*   展示: 只在最后 UI 展示时除以 Factor (`ValueDisplay` 字段保留原始值)。
+
+> 注意: Go 的 `int64()` 转换是**截断**而非四舍五入。例如 `100.00019 * 10000 = 1000001.9 -> 1000001`。
 
 ## 3. 并发模型与性能优化
 
@@ -51,6 +80,7 @@ val := 0.1 + 0.2 // = 0.30000000000000004
 
 1.  **Sharding**: 根据 `DeviceID` 将大批量的 Readings 分组。
 2.  **Concurrency Limit**: 使用 `Semaphore` (信号量) 模式控制并发度，防止大量 Goroutine 耗尽内存。
+3.  **错误聚合**: 使用 `errors.Join()` 收集所有并发错误，避免丢失错误信息。
 
 ```go
 // 信号量模式代码摘录
@@ -63,6 +93,38 @@ for _, group := range deviceGroups {
         processGroup(group)
     }()
 }
+
+// 错误收集模式
+wg.Wait()
+close(errChan)
+
+var errs []error
+for err := range errChan {
+    errs = append(errs, err)
+}
+if len(errs) > 0 {
+    return nil, errors.Join(errs...) // Go 1.20+
+}
+```
+
+### 3.1 异步隔离区保存
+
+隔离区数据的保存是异步的，以避免阻塞主流程：
+
+```go
+go func(qs []domain.QuarantineReading) {
+    // 带超时的上下文，避免无限阻塞
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    for _, q := range qs {
+        if err := s.quarantineRepo.Save(ctx, q); err != nil {
+            slog.Error("failed to save quarantine reading",
+                "device_id", q.Reading.DeviceInfo.ID,
+                "error", err)
+        }
+    }
+}(quarantinedReadings)
 ```
 
 ## 4. 扩展开发常见问题

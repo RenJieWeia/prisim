@@ -97,22 +97,41 @@ The `Standardizer` service cleans incoming raw data using a chain of injected ru
 ```go
 // Define custom rules implementing ports.CleaningRule
 type MaxLimitRule struct{ limit float64 }
-func (r *MaxLimitRule) Check(prev *domain.Reading, curr domain.Reading) (bool, error) {
-    if curr.Value > r.limit { return false, fmt.Errorf("exceeded") }
-    return true, nil
+
+func (r *MaxLimitRule) Check(ctx ports.CleaningContext, curr domain.Reading) ports.CheckResult {
+    if curr.Value > r.limit {
+        return ports.CheckResult{
+            Reading: curr,
+            Passed:  false,
+            Reason:  fmt.Sprintf("value %.2f exceeded limit %.2f", curr.Value, r.limit),
+        }
+    }
+    return ports.CheckResult{Reading: curr, Passed: true}
 }
 
 // Injected via functional options
 svc := services.NewCoreStandardizer(services.WithCleaningRules(&MaxLimitRule{100}))
 ```
 
-### domain.Unifier
-Handles the conversion between "Human Readable" floats and "Machine Precise" integers.
+### Precision Conversion
+The `CoreStandardizer` handles the conversion between "Human Readable" floats and "Machine Precise" integers automatically.
 
 ```go
-// 4 decimal places precision (x10000)
-unifier := domain.NewUnifier(10000) 
-scaled := unifier.ToScaled(100.00019) // Result: 1000002
+// Default: 4 decimal places precision (x10000)
+// 100.00019 * 10000 = 1000001 (int64 truncation)
+standardizer := services.NewCoreStandardizer()
+results, _ := standardizer.ProcessAndStandardize(ctx, readings)
+// results[0].ValueScaled = 1000001
+// results[0].ScaleFactor = 10000
+// results[0].ValueDisplay = 100.00019 (original preserved)
+```
+
+### Aligner (Time Alignment)
+Uses **binary search** (O(log n)) to find the nearest reading within tolerance:
+
+```go
+aligner := domain.NewAligner(5 * time.Minute) // 5-minute tolerance
+snapshot := aligner.FindSnapshot(sortedReadings, targetTime)
 ```
 
 ## 📄 License

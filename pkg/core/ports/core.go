@@ -33,3 +33,10 @@ type EnergyDataStandardizer interface {
 	// ProcessAndStandardize 直接处理输入数据并返回标准集 (用于即时转换场景)
 	ProcessAndStandardize(ctx context.Context, rawReadings []domain.Reading) ([]domain.StandardReading, error)
 }
+// Aligner 定义时间对齐能力的接口
+// 核心职责：从散乱的时间序列中提取特定时间点的快照
+type Aligner interface {
+	// FindSnapshot 在已排序的readings中查找最接近target时间点的读数
+	// 注意: readings 必须按 Timestamp 升序排列
+	FindSnapshot(readings []domain.Reading, target time.Time) *domain.Reading
+}
